@@ -3247,12 +3247,13 @@ function TimelineRow({
   const [editing, setEditing] = useState(false);
   return (
     <div
-      className={`group rounded-lg transition-colors ${open ? "bg-white/[0.05]" : "hover:bg-white/[0.04]"} ${
+      className={`group relative rounded-lg transition-colors ${open ? "bg-white/[0.05]" : "hover:bg-white/[0.04]"} ${
         fact.stale ? "opacity-55" : ""
       }`}
       title={fact.stale ? S.graph.staleFactHint : undefined}
     >
-      <button onClick={onToggle} className="w-full text-left px-2 py-1.5">
+      <TimeEditButton fact={fact} editing={editing} onToggle={setEditing} />
+      <button onClick={onToggle} className="w-full text-left px-2 py-1.5 pr-7">
         <div className="flex items-center gap-1.5 u-num text-[10.5px] text-neutral-500">
           {interval || "—"}
           {fact.corrected && (
@@ -3260,37 +3261,11 @@ function TimelineRow({
               ⟲
             </span>
           )}
-          <span className="ml-auto flex items-center gap-1.5">
-            {isOpenEnded && fact.last_evidence_time && (
-              <span className="text-neutral-600">
-                {S.graph.lastConfirmed(localDate(fact.last_evidence_time))}
-              </span>
-            )}
-            {/* 这一档只有断言事实：派生的区间是算出来的，走 Derived 那条路径，
-                改了下一轮推理也会覆盖（服务端另有 derived_by_rule 的防线） */}
-            <span
-              role="button"
-              tabIndex={0}
-              title={S.graph.editTime}
-              aria-label={S.graph.editTime}
-              onClick={(ev) => {
-                ev.stopPropagation();
-                setEditing((v) => !v);
-              }}
-              onKeyDown={(ev) => {
-                if (ev.key === "Enter" || ev.key === " ") {
-                  ev.preventDefault();
-                  ev.stopPropagation();
-                  setEditing((v) => !v);
-                }
-              }}
-              className={`cursor-pointer rounded p-0.5 transition-opacity hover:text-neutral-200 focus-visible:opacity-100 ${
-                editing ? "opacity-100" : "opacity-0 group-hover:opacity-100"
-              }`}
-            >
-              <Pencil size={10} />
+          {isOpenEnded && fact.last_evidence_time && (
+            <span className="ml-auto text-neutral-600">
+              {S.graph.lastConfirmed(localDate(fact.last_evidence_time))}
             </span>
-          </span>
+          )}
         </div>
         <div className="mt-0.5 flex items-center gap-1.5 text-[13px] text-neutral-200">
           <span className="text-neutral-500 text-xs">
@@ -3355,6 +3330,39 @@ function TimelineRow({
   );
 }
 
+/** 区间修正的入口。**在行的按钮外面**，不在里面：一个按钮里套另一个按钮
+ *  是无效的 HTML，读屏软件念出来的东西各家不一样；这里用绝对定位落在同一个
+ *  视觉位置上，行按钮留出右边距让开。
+ *
+ *  `eternal` 的谓词不给入口——本体说它不带时间，给它一个区间等于绕过本体。
+ *  年表与关系列表共用这一个：**没有日期的事实也要能改**，否则把两端清空之后
+ *  它掉进 Undated 就再也够不着了，而「抽取压根没读出日期」本就是 302 的另一半 */
+function TimeEditButton({
+  fact,
+  editing,
+  onToggle,
+}: {
+  fact: EntityFact;
+  editing: boolean;
+  onToggle: (next: boolean) => void;
+}) {
+  if (fact.temporal === "eternal") return null;
+  return (
+    <button
+      type="button"
+      title={S.graph.editTime}
+      aria-label={S.graph.editTime}
+      aria-expanded={editing}
+      onClick={() => onToggle(!editing)}
+      className={`absolute right-1 top-1.5 z-[1] rounded p-0.5 text-neutral-500 transition-opacity hover:text-neutral-200 focus-visible:opacity-100 ${
+        editing ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+      }`}
+    >
+      <Pencil size={10} />
+    </button>
+  );
+}
+
 /** 有效区间的人工修正表单（302）。
  *
  *  两端一起提交而不是逐端改：区间的两端互相定义，「清空结束端」与「这次不动
@@ -3406,14 +3414,20 @@ function TimeEditor({
       });
     },
     onSuccess: (r) => {
+      // 一字未改时服务端不写账本，这里也不能报「已修正」——那会打发人去
+      // History 找一条不存在的记录
+      if (r.unchanged) toast.success(S.graph.timeUnchanged);
       // 对账的后果要说出来：改了起点可能顺手闭合了继任者的开放区间，
       // 也可能撞出一条需要人裁的冲突。不说的话图会自己变而没人知道为什么
-      if (r.conflicts) toast.success(S.graph.timeSavedConflicts(r.conflicts));
+      else if (r.conflicts)
+        toast.success(S.graph.timeSavedConflicts(r.conflicts));
       else if (r.closed) toast.success(S.graph.timeSavedClosed(r.closed));
       else toast.success(S.graph.timeSaved);
       qc.invalidateQueries({ queryKey: ["entity", kbId] });
       qc.invalidateQueries({ queryKey: ["graph"] });
       qc.invalidateQueries({ queryKey: ["review", kbId] });
+      // 记录轴：这次修正正是要在 History 上看见的东西，它自己得刷新
+      qc.invalidateQueries({ queryKey: ["entityHistory", kbId] });
       onDone();
     },
     onError: (e: Error) => toast.error(e.message),
@@ -3484,14 +3498,14 @@ function TimeEditor({
       </div>
       <div className="mt-2 flex justify-end gap-1.5">
         <Button size="sm" variant="ghost" onClick={onDone}>
-          {S.graph.timeCancel}
+          {S.graph.editCancel}
         </Button>
         <Button
           size="sm"
           onClick={() => save.mutate()}
           disabled={save.isPending}
         >
-          {S.graph.timeSave}
+          {S.graph.editSave}
         </Button>
       </div>
     </div>
@@ -3526,17 +3540,19 @@ function FactRow({
   const interval = fmtInterval(fact);
   // 与 Review 的低置信口径一致：只有低到需要怀疑才挂 chip，常规置信保持沉默
   const lowConfidence = fact.confidence < 0.75;
+  const [editing, setEditing] = useState(false);
 
   return (
     <div
-      className={`rounded-lg transition-colors ${open ? "bg-white/[0.05]" : "hover:bg-white/[0.04]"} ${
+      className={`group relative rounded-lg transition-colors ${open ? "bg-white/[0.05]" : "hover:bg-white/[0.04]"} ${
         fact.stale ? "opacity-55" : ""
       }`}
       title={fact.stale ? S.graph.staleFactHint : undefined}
     >
+      <TimeEditButton fact={fact} editing={editing} onToggle={setEditing} />
       <button
         onClick={onToggle}
-        className="w-full text-left px-2 py-1.5 flex items-center gap-1.5"
+        className="w-full text-left px-2 py-1.5 pr-7 flex items-center gap-1.5"
       >
         <ChevronRight
           size={11}
@@ -3582,6 +3598,9 @@ function FactRow({
           </span>
         )}
       </button>
+      {editing && (
+        <TimeEditor kbId={kbId} fact={fact} onDone={() => setEditing(false)} />
+      )}
       {open && <EvidenceList kbId={kbId} fact={fact} />}
     </div>
   );

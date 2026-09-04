@@ -306,12 +306,15 @@ pub async fn update_fact_time(
     require_kb(&state, &user, kb_id, Role::Editor).await?;
     check_interval(&req)?;
 
-    // 归属与状态校验：本 KB 的、未作废的事实才可改。派生事实不在此列——
-    // 它的区间来自前提，改它等于改一个算出来的值，下一轮推理就会覆盖
+    // 归属与状态校验：本 KB 的、未作废的事实才可改。
+    //
+    // 派生事实不必在这里挡：0013 之后它们在 `derived_facts` 自己的表里，
+    // `facts` 里一行都没有——「推出来的区间改不动」是结构给的，不是这条
+    // WHERE 给的（`facts.derived_by_rule` 是那次搬迁留下的空列）
     let before: Option<FactInterval> = sqlx::query_as(
         "SELECT valid_from, valid_from_precision, valid_to, valid_to_precision
          FROM facts
-         WHERE id = $1 AND kb_id = $2 AND invalidated_at IS NULL AND derived_by_rule IS NULL",
+         WHERE id = $1 AND kb_id = $2 AND invalidated_at IS NULL",
     )
     .bind(fact_id)
     .bind(kb_id)
@@ -355,35 +358,41 @@ pub async fn update_fact_time(
     let report =
         utopia_store::temporal::reconcile_moved_facts(&state.pool, kb_id, &[corrected]).await?;
 
-    if let Some(mut d) = snap {
-        d["from"] = json!({
-            "valid_from": before.valid_from.map(|t| t.to_rfc3339()),
-            "valid_from_precision": before.valid_from_precision,
-            "valid_to": before.valid_to.map(|t| t.to_rfc3339()),
-            "valid_to_precision": before.valid_to_precision,
-        });
-        d["to"] = json!({
-            "valid_from": req.valid_from.map(|t| t.to_rfc3339()),
-            "valid_from_precision": req.valid_from_precision,
-            "valid_to": req.valid_to.map(|t| t.to_rfc3339()),
-            "valid_to_precision": req.valid_to_precision,
-        });
-        if let Some(note) = req.note.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-            d["note"] = json!(note);
-        }
-        let _ = utopia_store::audit::record(
-            &state.pool,
-            Some(kb_id),
-            user.id,
-            "fact.time_corrected",
-            "fact",
-            Some(fact_id),
-            d,
-        )
-        .await;
+    // **台账无条件写。** 快照只是给台账配一句人话（主谓宾），它取不到时
+    // `fact_snapshot` 把数据库错误吞成 None——要是连带把整条记录跳过，这次
+    // 修正在记录轴上就没有归因，`entity_history` 会按白名单把它记到 engine
+    // 头上，正是这一刀要修的那件事从另一个入口回来
+    let mut d = snap.unwrap_or_else(|| json!({}));
+    d["from"] = json!({
+        "valid_from": before.valid_from.map(|t| t.to_rfc3339()),
+        "valid_from_precision": before.valid_from_precision,
+        "valid_to": before.valid_to.map(|t| t.to_rfc3339()),
+        "valid_to_precision": before.valid_to_precision,
+    });
+    d["to"] = json!({
+        "valid_from": req.valid_from.map(|t| t.to_rfc3339()),
+        "valid_from_precision": req.valid_from_precision,
+        "valid_to": req.valid_to.map(|t| t.to_rfc3339()),
+        "valid_to_precision": req.valid_to_precision,
+    });
+    if let Some(note) = req.note.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        d["note"] = json!(note);
     }
+    let _ = utopia_store::audit::record(
+        &state.pool,
+        Some(kb_id),
+        user.id,
+        "fact.time_corrected",
+        "fact",
+        Some(fact_id),
+        d,
+    )
+    .await;
 
     state.emit_review(kb_id);
+    // 图也变了，而且不止这一条：对账可能顺手闭合了别人的开放区间。不推的话
+    // 另一个人开着的图谱页会跟这一页各说各话
+    state.emit_graph(kb_id);
     Ok(Json(json!({
         "ok": true,
         "fact_id": corrected,

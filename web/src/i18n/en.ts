@@ -859,9 +859,8 @@ export const en = {
     timeBadDate: "Use 2023, 2023-06 or 2023-06-15.",
     timeNote: "Why (optional)",
     timeNotePlaceholder: "The document says the first half of 2023",
-    timeSave: "Save",
-    timeCancel: "Cancel",
     timeSaved: "Interval corrected",
+    timeUnchanged: "The interval is already what you typed",
     timeSavedClosed: (n: number) =>
       `Interval corrected — ${n} open fact${n === 1 ? "" : "s"} closed to match`,
     timeSavedConflicts: (n: number) =>

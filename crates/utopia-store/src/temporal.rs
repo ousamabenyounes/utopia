@@ -317,6 +317,19 @@ pub async fn correct_interval(
 ) -> AppResult<Option<Uuid>> {
     let mut tx = pool.begin().await?;
     let corrected = Uuid::now_v7();
+    // **先把这一行锁住。** 只在 INSERT…SELECT 上写 `invalidated_at IS NULL`
+    // 挡不住并发：READ COMMITTED 下第二个事务读到的仍是「未作废」的快照，
+    // 于是两边各插一条后继，图上同一组主谓宾多出一条边。这是人能同时点两次
+    // 的路径（两个编辑者、或一次双击），不是引擎独占的那条
+    let live: Option<(Uuid,)> =
+        sqlx::query_as("SELECT id FROM facts WHERE id = $1 AND invalidated_at IS NULL FOR UPDATE")
+            .bind(fact_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    if live.is_none() {
+        tx.rollback().await?;
+        return Ok(None);
+    }
     let inserted: Option<(Uuid,)> = sqlx::query_as(
         "INSERT INTO facts (id, kb_id, subject_id, predicate_id, object_id, object_value,
                             valid_from, valid_from_precision,
@@ -334,7 +347,7 @@ pub async fn correct_interval(
     .bind(validity.to_precision)
     .fetch_optional(&mut *tx)
     .await?;
-    // 已被并发修正过：不重复动手（与 close_superseded 同一防线）
+    // 锁之后仍然落空只可能是行没了（级联删）：照样不动手
     if inserted.is_none() {
         tx.rollback().await?;
         return Ok(None);

@@ -19,6 +19,8 @@ use utopia_store::graph::Validity;
 use uuid::Uuid;
 
 struct Fixture {
+    /// 拆台账用：删组织，其余靠级联（与同目录其它测试同一个收尾）
+    org: Uuid,
     kb: Uuid,
     zhang: Uuid,
     li: Uuid,
@@ -103,6 +105,7 @@ async fn seed(pool: &PgPool) -> anyhow::Result<Fixture> {
     .execute(pool)
     .await?;
     Ok(Fixture {
+        org,
         kb,
         zhang,
         li,
@@ -227,8 +230,8 @@ async fn correcting_a_date_leaves_the_old_reading_in_the_ledger() -> anyhow::Res
     }
     .await;
 
-    sqlx::query("DELETE FROM knowledge_bases WHERE id = $1")
-        .bind(f.kb)
+    sqlx::query("DELETE FROM organizations WHERE id = $1")
+        .bind(f.org)
         .execute(&pool)
         .await?;
     run
@@ -283,8 +286,8 @@ async fn an_end_that_was_never_there_can_be_taken_back() -> anyhow::Result<()> {
     }
     .await;
 
-    sqlx::query("DELETE FROM knowledge_bases WHERE id = $1")
-        .bind(f.kb)
+    sqlx::query("DELETE FROM organizations WHERE id = $1")
+        .bind(f.org)
         .execute(&pool)
         .await?;
     run
@@ -355,8 +358,8 @@ async fn moving_a_start_earlier_makes_it_the_predecessor() -> anyhow::Result<()>
     }
     .await;
 
-    sqlx::query("DELETE FROM knowledge_bases WHERE id = $1")
-        .bind(f.kb)
+    sqlx::query("DELETE FROM organizations WHERE id = $1")
+        .bind(f.org)
         .execute(&pool)
         .await?;
     run
@@ -402,8 +405,8 @@ async fn a_row_that_is_already_gone_cannot_be_corrected() -> anyhow::Result<()> 
     }
     .await;
 
-    sqlx::query("DELETE FROM knowledge_bases WHERE id = $1")
-        .bind(f.kb)
+    sqlx::query("DELETE FROM organizations WHERE id = $1")
+        .bind(f.org)
         .execute(&pool)
         .await?;
     run

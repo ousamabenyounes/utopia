@@ -772,9 +772,8 @@ export const zh: Strings = {
     timeBadDate: "请写成 2023、2023-06 或 2023-06-15。",
     timeNote: "原因（选填）",
     timeNotePlaceholder: "文档说的是 2023 年上半年",
-    timeSave: "保存",
-    timeCancel: "取消",
     timeSaved: "区间已修正",
+    timeUnchanged: "区间跟你填的一样，没有改动",
     timeSavedClosed: (n: number) => `区间已修正——顺带闭合了 ${n} 条现行事实`,
     timeSavedConflicts: (n: number) =>
       `区间已修正——${n} 条冲突待在审阅里裁决`,
